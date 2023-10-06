@@ -25,5 +25,5 @@ jobs:
       - name: Fetch requests
         uses: githubocto/flat@v2
         with:
-          http_url: https://datascapesg-scrapers.netlify.app/.netlify/functions/redcross-bloodstocks
+          http_url: https://jocular-figolla-bd60d7.netlify.app/.netlify/functions/redcross-bloodstocks
           downloaded_filename: blood-stocks.json
