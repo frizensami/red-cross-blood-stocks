@@ -1,0 +1,13 @@
+{
+  "name": "red-cross-blood-stocks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scrape and store Singapore Red Cross blood stock levels.",
+  "scripts": {
+    "fetch": "node scripts/fetch-blood-stocks.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "got": "^11.8.6"
+  }
+}
