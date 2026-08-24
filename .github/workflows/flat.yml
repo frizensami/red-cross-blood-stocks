@@ -7,8 +7,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '*/60 * * * *'
+    # 00:15 Singapore time: alert only if no fetch succeeded in the prior day.
+    - cron: '15 16 * * *'
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -28,9 +31,22 @@ jobs:
         run: npm ci
 
       - name: Fetch blood stocks
-        run: npm run fetch
+        id: fetch
+        continue-on-error: true
+        run: |
+          for attempt in 1 2 3; do
+            if npm run fetch; then
+              exit 0
+            fi
+            if [ "${attempt}" -lt 3 ]; then
+              sleep $((attempt * 60))
+            fi
+          done
+          echo "Fetch failed after 3 attempts."
+          exit 1
 
       - name: Commit latest data
+        if: steps.fetch.outcome == 'success'
         run: |
           if git diff --quiet -- blood-stocks.json; then
             echo "No data changes"
@@ -43,3 +59,49 @@ jobs:
           git add blood-stocks.json
           git commit -m "Flat: latest data (${date})"
           git push
+
+  daily-watchdog:
+    if: github.event_name == 'schedule' && github.event.schedule == '15 16 * * *'
+    needs: scheduled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a successful fetch in the last 24 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cutoff_epoch="$(date -u -d '24 hours ago' +%s)"
+          runs_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runs?event=schedule&per_page=100"
+          runs_json="$(curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "${runs_url}")"
+
+          found_success="false"
+          while IFS= read -r run_id; do
+            [ -n "${run_id}" ] || continue
+
+            jobs_json="$(curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")"
+
+            if jq -e '.jobs[]?.steps[]? | select(.name == "Fetch blood stocks" and .conclusion == "success")' \
+              >/dev/null <<<"${jobs_json}"; then
+              found_success="true"
+              break
+            fi
+          done < <(
+            jq -r --argjson cutoff "${cutoff_epoch}" \
+              '.workflow_runs[]
+               | select((.created_at | fromdateiso8601) >= $cutoff)
+               | .id' <<<"${runs_json}"
+          )
+
+          if [ "${found_success}" != "true" ]; then
+            echo "No successful blood-stock fetch found in the last 24 hours."
+            exit 1
+          fi
+
+          echo "At least one blood-stock fetch succeeded in the last 24 hours."
