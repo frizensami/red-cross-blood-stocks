@@ -3,69 +3,41 @@ const path = require("node:path")
 const cheerio = require("cheerio")
 const got = require("got")
 
-const REDCROSS_HOST = "https://redcross.sg"
-const OUTPUT_FILE = path.join(__dirname, "..", "blood-stocks.json")
-const BLOOD_GROUPS = [
-  { className: "a_group" },
-  { className: "b_group" },
-  { className: "o_group" },
-  { className: "ab_group" },
-]
+const SOURCE = "https://www.redcross.sg/"
+const ROOT = path.join(__dirname, "..")
+const TYPES = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]
+const STATUSES = new Map([["high", "High"], ["healthy", "Healthy"], ["moderate", "Moderate"], ["low", "Low"], ["critical", "Critical"]])
 
-function textOrThrow($element, selector, label) {
-  const value = $element.find(selector).first().text().trim()
-  if (!value) {
-    throw new Error(`Could not find ${label}`)
-  }
-  return value
-}
-
-function fillLevelOrThrow($element) {
-  const comment = $element
-    .find(".blood-grp-hover")
-    .first()
-    .contents()
-    .toArray()
-    .find((node) => node.type === "comment")
-
-  const fillLevel = comment?.data?.trim().replace(/%$/, "")
-  if (!fillLevel) {
-    throw new Error("Could not find fill level")
-  }
-  return fillLevel
-}
-
-async function fetchBloodStocks(url = REDCROSS_HOST) {
-  const response = await got(url, {
-    timeout: { request: 30000 },
+function parsePage(html) {
+  const $ = cheerio.load(html)
+  const cards = $(".blood-level-card")
+  if (cards.length !== 8) throw new Error(`Expected 8 blood stock cards, found ${cards.length}`)
+  const byType = new Map()
+  cards.each((_, card) => {
+    const type = ($(card).attr("blood-type") || "").trim().toUpperCase()
+    const rawStatus = ($(card).attr("blood-level") || "").trim().toLowerCase()
+    if (!TYPES.includes(type)) throw new Error(`Invalid blood type: ${type}`)
+    if (byType.has(type)) throw new Error(`Duplicate blood type: ${type}`)
+    if (!STATUSES.has(rawStatus)) throw new Error(`Invalid status for ${type}: ${rawStatus}`)
+    byType.set(type, { bloodType: type, status: STATUSES.get(rawStatus) })
   })
-  const $ = cheerio.load(response.body)
-  const state = []
-
-  for (const group of BLOOD_GROUPS) {
-    $(`.${group.className}`).each(function () {
-      const $group = $(this)
-      state.push({
-        bloodType: textOrThrow($group, "h3", "blood type"),
-        status: textOrThrow($group, ".blood-grp-text h5", "status"),
-        fillLevel: fillLevelOrThrow($group),
-      })
-    })
-  }
-
-  if (state.length !== 8) {
-    throw new Error(`Expected 8 blood stock records, found ${state.length}`)
-  }
-
-  return state
+  const dateText = $(".blood-stock-last-update-text").text().trim()
+  const match = /^Last blood stock update:\s*(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})$/i.exec(dateText)
+  if (!match) throw new Error(`Invalid source update date: ${dateText}`)
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+  const month = months.indexOf(match[2].toLowerCase())
+  const date = new Date(Date.UTC(Number(match[3]), month, Number(match[1])))
+  if (date.getUTCFullYear() !== Number(match[3]) || date.getUTCMonth() !== month || date.getUTCDate() !== Number(match[1])) throw new Error(`Invalid source update date: ${dateText}`)
+  return { stocks: TYPES.map(type => byType.get(type)), sourceUpdatedAt: date.toISOString().slice(0, 10) }
 }
 
 async function main() {
-  const state = await fetchBloodStocks()
-  await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(state, null, 2)}\n`)
+  const response = await got(SOURCE, { timeout: { request: 30000 }, retry: 0 })
+  const { stocks, sourceUpdatedAt } = parsePage(response.body)
+  const metadata = { source: SOURCE, sourceUpdatedAt, fetchedAt: new Date().toISOString(), recordCount: stocks.length }
+  await fs.writeFile(path.join(ROOT, "blood-stocks.json"), `${JSON.stringify(stocks, null, 2)}\n`)
+  await fs.writeFile(path.join(ROOT, "scrape-status.json"), `${JSON.stringify(metadata, null, 2)}\n`)
 }
 
-main().catch((error) => {
-  console.error(error)
-  process.exit(1)
-})
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1 })
+module.exports = { parsePage }
