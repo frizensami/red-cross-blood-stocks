@@ -12,6 +12,12 @@ test('valid cards normalize categories and preserve source date without inventin
   assert.equal(result.stocks.length, 8)
   assert.deepEqual(result.stocks[1], { bloodType: 'A-', status: 'Moderate' })
 })
+test('accept all known source categories case-insensitively', () => {
+  for (const status of ['HIGH', 'healthy', 'Moderate', 'low', 'CRITICAL']) {
+    const result = parsePage(page(types.map(t => card(t, status)).join('')))
+    assert.equal(result.stocks[0].status, status[0].toUpperCase() + status.slice(1).toLowerCase())
+  }
+})
 test('reject missing, extra, duplicate, unknown and malformed records', () => {
   for (const cards of [types.slice(1).map(t => card(t)).join(''), types.map(t => card(t)).join('') + card('A+'), types.map((t, i) => card(i === 0 ? 'A-' : t)).join(''), types.map((t, i) => card(i === 0 ? 'X+' : t)).join(''), types.map((t, i) => card(t, i === 0 ? '' : 'healthy')).join(''), types.map((t, i) => card(t, i === 0 ? 'unknown' : 'healthy')).join('')]) assert.throws(() => parsePage(page(cards)))
 })

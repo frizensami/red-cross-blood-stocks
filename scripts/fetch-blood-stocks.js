@@ -6,7 +6,7 @@ const got = require("got")
 const SOURCE = "https://www.redcross.sg/"
 const ROOT = path.join(__dirname, "..")
 const TYPES = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]
-const STATUSES = new Map([["healthy", "Healthy"], ["moderate", "Moderate"], ["low", "Low"]])
+const STATUSES = new Map([["high", "High"], ["healthy", "Healthy"], ["moderate", "Moderate"], ["low", "Low"], ["critical", "Critical"]])
 
 function parsePage(html) {
   const $ = cheerio.load(html)
